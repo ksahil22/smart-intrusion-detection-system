@@ -1,10 +1,21 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from streamlit_autorefresh import st_autorefresh
 import time
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import deque
+
+# Load predictions (you must save and load these beforehand)
+@st.cache_data
+def load_prediction_stream():
+    # Replace with your actual saved predictions
+    # For demonstration, we'll simulate with dummy values
+    # In real use: load from .csv or .pkl
+    df = pd.read_csv("models/cleaned_data/streaming.csv")
+    df = df.sample(frac=1)
+    return df
 
 # Simulated prediction stream (replace with real-time data ingestion)
 def simulate_detection():
@@ -15,38 +26,59 @@ def simulate_detection():
 
 # Streamlit setup
 st.set_page_config(page_title="IoT IDS Dashboard", layout="wide")
-st.title("Smart IDS Dashboard for IoT Devices")
 
-# State storage for real-time charts
-if 'log' not in st.session_state:
-    st.session_state.log = deque(maxlen=100)
-    st.session_state.stats = {'Normal': 0, 'DoS': 0, 'Botnet': 0, 'Probe': 0, 'BruteForce': 0}
+if 'refresh_interval' not in st.session_state:
+    st.session_state.refresh_interval = 5
+
+# Refresh every 3 seconds
+st_autorefresh(interval=st.session_state.refresh_interval * 1000, key="stream_autorefresh")
+
+st.title("Smart IDS Dashboard for IoT Devices")
 
 # Sidebar settings
 st.sidebar.header("Settings")
-thresh = st.sidebar.slider("Confidence Threshold", 0.80, 1.00, 0.90, 0.01)
-auto_refresh = st.sidebar.checkbox("Auto Refresh", value=True)
-refresh_interval = st.sidebar.slider("Refresh Interval (sec)", 1, 10, 3)
+# Sidebar: how many samples to process per refresh
+num_to_show = st.sidebar.number_input("Samples per refresh", min_value=1, max_value=1000, value=25)
+st.session_state.refresh_interval = st.sidebar.slider("Refresh Interval (sec)", 1, 15, 5)
+
+# Simulated cache to store the streaming index
+if "stream_index" not in st.session_state:
+    st.session_state.stream_index = 0
+
+if "stream_size" not in st.session_state:
+    st.session_state.stream_size = 0
+
+# State storage for real-time charts
+if 'log' not in st.session_state:
+    st.session_state.log = deque(maxlen=num_to_show)
+    st.session_state.stats = {'Normal': 0, 'DoS': 0, 'Probe': 0, 'R2L': 0, 'U2R': 0}
+
+if 'data' not in st.session_state:
+    st.session_state.data = load_prediction_stream()
+    st.session_state.label_names = sorted(st.session_state.data["Prediction"].unique())  # Class labels
+
+# Extract next batch
+st.session_state.stream_size = min(st.session_state.stream_size + 1, num_to_show)
+st.session_state.stream_index += 1
+st.session_state.end_idx = st.session_state.stream_index
+st.session_state.start_idx = max(0, st.session_state.end_idx - st.session_state.stream_size)
 
 # Simulate and log a new entry
-if auto_refresh or st.button("Manual Refresh"):
-    pred, conf = simulate_detection()
-    timestamp = time.strftime("%H:%M:%S")
-    alert = conf >= thresh
-    st.session_state.log.appendleft({
-        'Time': timestamp,
-        'Prediction': pred,
-        'Confidence': conf,
-        'Alert': alert
-    })
-    st.session_state.stats[pred] += 1
-    time.sleep(refresh_interval if auto_refresh else 0)
+timestamp = time.strftime("%H:%M:%S")
+batch = st.session_state.data.iloc[st.session_state.start_idx:st.session_state.end_idx]
+st.session_state.log.appendleft({
+    'Time': timestamp,
+    'Protocol': st.session_state.data['Protocol'].iloc[st.session_state.end_idx],
+    'Service': st.session_state.data['Service'].iloc[st.session_state.end_idx],
+    'Prediction': st.session_state.data['Prediction'].iloc[st.session_state.end_idx]
+    # 'Status': "✅ Normal" if st.session_state.data['Prediction'].iloc[st.session_state.end_idx] == "Normal" else "🚨 Intrusion"
+})
+st.session_state.stats[st.session_state.data['Prediction'].iloc[st.session_state.end_idx]] += 1
 
 # Summary stats
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 col1.metric("Total Processed", sum(st.session_state.stats.values()))
 col2.metric("Total Attacks Detected", sum(v for k,v in st.session_state.stats.items() if k != 'Normal'))
-col3.metric("Threshold", f">= {thresh}")
 
 # Detection Feed
 st.subheader("Real-Time Detection Feed")
@@ -64,10 +96,8 @@ with col4:
     st.pyplot(fig1)
 
 with col5:
-    alert_counts = [entry['Alert'] for entry in st.session_state.log].count(True)
-    normal_counts = len(st.session_state.log) - alert_counts
     fig2, ax2 = plt.subplots()
-    ax2.pie([normal_counts, alert_counts], labels=['Normal', 'Alerts'], autopct='%1.1f%%', startangle=90)
+    ax2.pie(list(st.session_state.stats.values()), labels=st.session_state.stats.keys(), autopct='%1.1f%%', startangle=90)
     ax2.axis('equal')
     st.pyplot(fig2)
 
