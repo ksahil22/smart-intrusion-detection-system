@@ -17,18 +17,22 @@ def load_prediction_stream():
     df = df.sample(frac=1)
     return df
 
-# Simulated prediction stream (replace with real-time data ingestion)
-def simulate_detection():
-    attack_types = ['Normal', 'DoS', 'Botnet', 'Probe', 'BruteForce']
-    prediction = np.random.choice(attack_types, p=[0.85, 0.05, 0.04, 0.04, 0.02])
-    confidence = round(np.random.uniform(0.85, 1.0), 2)
-    return prediction, confidence
+def highlight_attack(attack_type):
+    if attack_type == "Normal":
+        return 'background-color: #d0f0c0'  # Light green
+    elif attack_type in ['DoS', 'R2L', 'U2R']:
+        return 'background-color: #ff9999'  # Light red
+    elif attack_type == "Probe":
+        return 'background-color: #ffe0b3'  # Light orange
+    else:
+        return ''
 
 # Streamlit setup
 st.set_page_config(page_title="IoT IDS Dashboard", layout="wide")
+REFRESH_INTERVAL = 3
 
 if 'refresh_interval' not in st.session_state:
-    st.session_state.refresh_interval = 5
+    st.session_state.refresh_interval = REFRESH_INTERVAL
 
 # Refresh every 3 seconds
 st_autorefresh(interval=st.session_state.refresh_interval * 1000, key="stream_autorefresh")
@@ -39,7 +43,7 @@ st.title("Smart IDS Dashboard for IoT Devices")
 st.sidebar.header("Settings")
 # Sidebar: how many samples to process per refresh
 num_to_show = st.sidebar.number_input("Samples per refresh", min_value=1, max_value=1000, value=25)
-st.session_state.refresh_interval = st.sidebar.slider("Refresh Interval (sec)", 1, 15, 5)
+st.session_state.refresh_interval = st.sidebar.slider("Refresh Interval (sec)", 1, 15, REFRESH_INTERVAL)
 
 # Simulated cache to store the streaming index
 if "stream_index" not in st.session_state:
@@ -83,7 +87,10 @@ col2.metric("Total Attacks Detected", sum(v for k,v in st.session_state.stats.it
 # Detection Feed
 st.subheader("Real-Time Detection Feed")
 feed_df = pd.DataFrame(list(st.session_state.log))
-st.dataframe(feed_df, use_container_width=True)
+
+# Apply to just the Prediction column
+styled_df = feed_df.style.applymap(highlight_attack, subset=["Prediction"])
+st.dataframe(styled_df, use_container_width=True)
 
 # Charts
 st.subheader("Traffic Summary")
